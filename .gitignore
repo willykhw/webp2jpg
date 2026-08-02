@@ -3,10 +3,12 @@ __pycache__/
 *.py[cod]
 .pytest_cache/
 
-# PyInstaller 打包產物
-build/
-*.spec
+# PyInstaller 單一執行檔（產生物）
 webp2jpg.exe
 
-# 使用者本地設定（每台機器不同，不該進版控）
+# PyInstaller 暫存工作夾與 spec 檔（都在 build/）
+build/
+*.spec
+
+# 使用者本地設定（每台機器不同，不進版控）
 config.json

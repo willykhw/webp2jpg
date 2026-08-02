@@ -1,21 +1,21 @@
 @echo off
-REM Build a single-file Windows .exe (no Python needed to run the result).
+REM Build the app into a single webp2jpg.exe in this folder.
 REM Usage: double-click this file, or run build.bat in a terminal.
-REM Output: dist\webp2jpg.exe
+REM Output: webp2jpg.exe (in this folder). Scratch stays under build\.
 
 echo [1/2] Installing dependencies...
-python -m pip install -r requirements.txt pyinstaller
+python -m pip install -r src\requirements.txt pyinstaller
 if errorlevel 1 goto error
 
-echo [2/2] Packaging...
-REM --collect-all tkinterdnd2 bundles the tkdnd resources, otherwise
-REM drag-and-drop stops working after packaging.
-REM --distpath . puts webp2jpg.exe right here instead of in a dist\ folder.
-pyinstaller --noconfirm --onefile --windowed --name webp2jpg --collect-all tkinterdnd2 --distpath . app.py
+echo [2/2] Packaging (onefile)...
+REM --onefile: one portable .exe (slower start, but no support folder needed).
+REM --collect-all tkinterdnd2 bundles the tkdnd resources for drag-and-drop.
+REM --distpath . puts webp2jpg.exe here; work dir + .spec stay under build\.
+pyinstaller --noconfirm --onefile --windowed --name webp2jpg --collect-all tkinterdnd2 --distpath . --workpath build\_work --specpath build src\app.py
 if errorlevel 1 goto error
 
 echo.
-echo Done. The executable is webp2jpg.exe (in this folder).
+echo Done. Run webp2jpg.exe in this folder.
 goto end
 
 :error

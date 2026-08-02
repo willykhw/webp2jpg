@@ -65,8 +65,6 @@ class ConverterApp:
         self.use_source_dir = BooleanVar(value=bool(settings.get("use_source_dir", False)))
         fmt = str(settings.get("target_format", "JPG")).upper()
         self.target_format = StringVar(value=fmt if fmt in OUTPUT_FORMATS else "JPG")
-        self.resize_on = BooleanVar(value=bool(settings.get("resize_on", False)))
-        self.max_edge_text = StringVar(value=str(settings.get("max_edge", 1920)))
 
         self._build_ui()
 
@@ -154,13 +152,6 @@ class ConverterApp:
         self.q_label = ttk.Label(q_frame, text=str(self.quality), width=5, anchor="e")
         self.q_label.pack(side="right", padx=(8, 0))
 
-        ttk.Checkbutton(
-            out_box, text="限制最長邊（像素）",
-            variable=self.resize_on, command=self._on_toggle_resize,
-        ).grid(row=5, column=0, sticky="w", pady=4)
-        self.edge_entry = ttk.Entry(out_box, textvariable=self.max_edge_text, width=10)
-        self.edge_entry.grid(row=5, column=1, sticky="w", padx=8, pady=4)
-
         # ── 區塊 3：執行 ──
         run_box = ttk.Frame(outer)
         run_box.pack(fill="x", pady=(12, 0))
@@ -178,7 +169,6 @@ class ConverterApp:
         # 依載入的設定套用初始啟用/停用狀態
         self._on_toggle_default()
         self._on_format_change()
-        self._on_toggle_resize()
 
     # ---------- 事件處理 ----------
     def _on_drop(self, event):
@@ -252,9 +242,6 @@ class ConverterApp:
         self.q_scale.config(state="normal" if lossy else "disabled")
         self.q_label.config(text=str(self.quality) if lossy else "無損")
 
-    def _on_toggle_resize(self):
-        self.edge_entry.config(state="normal" if self.resize_on.get() else "disabled")
-
     def _on_quality(self, value):
         self.quality = int(float(value))
         self.q_label.config(text=str(self.quality))
@@ -274,15 +261,6 @@ class ConverterApp:
                 messagebox.showwarning("沒有輸出位置", "請先選擇輸出資料夾，或勾選「預設」")
                 return
             out_dir = Path(out)
-
-        # 縮放參數：勾了才生效，且必須是正整數
-        max_edge = None
-        if self.resize_on.get():
-            txt = self.max_edge_text.get().strip()
-            if not txt.isdigit() or int(txt) <= 0:
-                messagebox.showwarning("縮放尺寸無效", "最長邊請輸入正整數（像素）")
-                return
-            max_edge = int(txt)
 
         target = self.target_format.get()
 
@@ -305,7 +283,7 @@ class ConverterApp:
         # 轉檔放到背景執行緒，避免 UI 卡住
         threading.Thread(
             target=self._run_convert,
-            args=(files_to_convert, out_dir, target, self.quality, max_edge, skipped),
+            args=(files_to_convert, out_dir, target, self.quality, skipped),
             daemon=True,
         ).start()
 
@@ -391,14 +369,13 @@ class ConverterApp:
             return [f for f in files if f not in conflict_set]  # 略過
         return files  # 覆蓋
 
-    def _run_convert(self, files, out_dir, target, quality, max_edge, skipped=0):
+    def _run_convert(self, files, out_dir, target, quality, skipped=0):
         def progress(i, total, src, result):
             # 從背景執行緒安全更新 UI
             self.root.after(0, lambda: self._update_progress(i, total, src))
 
         successes, failures = convert_batch(
-            files, out_dir, target=target, quality=quality,
-            max_edge=max_edge, on_progress=progress,
+            files, out_dir, target=target, quality=quality, on_progress=progress,
         )
         self.root.after(0, lambda: self._finish(successes, failures, skipped))
 
@@ -444,8 +421,6 @@ class ConverterApp:
             "quality": self.quality,
             "use_source_dir": self.use_source_dir.get(),
             "target_format": self.target_format.get(),
-            "resize_on": self.resize_on.get(),
-            "max_edge": self.max_edge_text.get().strip(),
         }
         try:
             path.parent.mkdir(parents=True, exist_ok=True)

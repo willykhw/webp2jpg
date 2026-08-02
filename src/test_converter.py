@@ -106,26 +106,6 @@ def test_webp_output(tmp_path):
         assert res.format == "WEBP"
 
 
-def test_resize_shrinks_long_edge_only(tmp_path):
-    # 寬 200 高 100，限制最長邊 50 -> 應變成 50x25（等比例）
-    src = tmp_path / "wide.png"
-    Image.new("RGB", (200, 100), (0, 0, 0)).save(src, "PNG")
-    (tmp_path / "o").mkdir()
-    out = convert_one(src, tmp_path / "o", target="PNG", max_edge=50)
-    with Image.open(out) as res:
-        assert res.size == (50, 25)
-
-
-def test_resize_never_upscales(tmp_path):
-    # 圖片已比上限小，不應被放大
-    src = tmp_path / "small.png"
-    Image.new("RGB", (30, 20), (0, 0, 0)).save(src, "PNG")
-    (tmp_path / "o2").mkdir()
-    out = convert_one(src, tmp_path / "o2", target="PNG", max_edge=500)
-    with Image.open(out) as res:
-        assert res.size == (30, 20)
-
-
 def test_target_extension():
     assert target_extension("JPG") == ".jpg"
     assert target_extension("png") == ".png"  # 大小寫不敏感

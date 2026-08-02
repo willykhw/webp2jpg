@@ -1,6 +1,6 @@
 """圖片轉檔核心邏輯（純函式，與 UI 無關，方便單元測試）。
 
-支援多種輸入格式轉成 JPG / PNG / WEBP，可調品質、等比例縮放，
+支援多種輸入格式轉成 JPG / PNG / WEBP，可調品質，
 並依目標格式決定是否保留透明（JPG 不支援透明時填底色）。
 """
 
@@ -12,12 +12,6 @@ from PIL import Image
 
 # JPG 不支援透明通道，遇到帶 alpha 的來源時用這個底色填滿。
 DEFAULT_BACKGROUND = (255, 255, 255)  # 白色
-
-# Pillow 9.1 起改用 Image.Resampling，舊版退回 Image.LANCZOS
-try:
-    _RESAMPLE = Image.Resampling.LANCZOS
-except AttributeError:  # pragma: no cover - 取決於 Pillow 版本
-    _RESAMPLE = Image.LANCZOS
 
 # 支援的輸出格式：Pillow 格式名、副檔名、是否有損、是否支援透明
 OUTPUT_FORMATS = {
@@ -39,25 +33,12 @@ def _has_alpha(im: Image.Image) -> bool:
     return im.mode in ("RGBA", "LA") or (im.mode == "P" and "transparency" in im.info)
 
 
-def _resize_if_needed(im: Image.Image, max_edge: int | None) -> Image.Image:
-    """把最長邊縮到 max_edge 以內（等比例、不放大）。max_edge 為 None 則不動。"""
-    if not max_edge:
-        return im
-    longest = max(im.size)
-    if longest <= max_edge:
-        return im  # 已經夠小，不放大
-    scale = max_edge / longest
-    new_size = (max(1, round(im.width * scale)), max(1, round(im.height * scale)))
-    return im.resize(new_size, _RESAMPLE)
-
-
 def convert_one(
     src,
     dst_dir,
     target: str = "JPG",
     quality: int = 90,
     background: tuple[int, int, int] = DEFAULT_BACKGROUND,
-    max_edge: int | None = None,
 ) -> Path:
     """把單一圖片轉成指定格式，回傳輸出檔路徑。
 
@@ -66,7 +47,6 @@ def convert_one(
     target     : 目標格式 'JPG' / 'PNG' / 'WEBP'
     quality    : 有損格式（JPG/WEBP）的品質 1-100；PNG 無損會忽略
     background : 目標不支援透明（JPG）且來源有透明時，透明區域填的 RGB 底色
-    max_edge   : 最長邊上限（像素），超過就等比例縮小；None 表示不縮放
     """
     target = target.upper()
     if target not in OUTPUT_FORMATS:
@@ -79,8 +59,6 @@ def convert_one(
     target_dir = src.parent if dst_dir is None else Path(dst_dir)
 
     with Image.open(src) as im:
-        im = _resize_if_needed(im, max_edge)
-
         if spec["alpha"]:
             # 目標支援透明：有 alpha 就保留 RGBA，否則存 RGB
             out_im = im.convert("RGBA") if _has_alpha(im) else im.convert("RGB")
@@ -110,7 +88,6 @@ def convert_batch(
     target: str = "JPG",
     quality: int = 90,
     background: tuple[int, int, int] = DEFAULT_BACKGROUND,
-    max_edge: int | None = None,
     on_progress=None,
 ):
     """批次轉檔。回傳 (successes, failures)。
@@ -130,8 +107,7 @@ def convert_batch(
     for i, src in enumerate(sources, start=1):
         try:
             out = convert_one(
-                src, dst_dir, target=target, quality=quality,
-                background=background, max_edge=max_edge,
+                src, dst_dir, target=target, quality=quality, background=background,
             )
             successes.append(out)
             if on_progress:
