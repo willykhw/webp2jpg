@@ -1,5 +1,6 @@
-"""WebP -> JPG 圖片轉檔小工具（Windows 10/11）。
+"""圖片轉檔小工具（Windows 10/11）。
 
+輸入 WebP/PNG/JPG/BMP/GIF/TIFF，輸出 JPG/PNG/WEBP，可調品質與縮放。
 啟動：python app.py
 需要：Pillow、tkinterdnd2（見 requirements.txt）
 """
@@ -23,7 +24,7 @@ from tkinter import (
 )
 from tkinter import ttk
 
-from converter import convert_batch
+from converter import INPUT_EXTS, OUTPUT_FORMATS, convert_batch, target_extension
 
 # 拖曳功能靠 tkinterdnd2；沒裝的話程式仍可用「加入檔案」按鈕運作。
 try:
@@ -51,17 +52,21 @@ def _config_path() -> Path:
 class ConverterApp:
     def __init__(self, root: Tk):
         self.root = root
-        root.title("WebP → JPG 轉檔小工具")
-        root.geometry("560x520")
-        root.minsize(480, 460)
+        root.title("圖片轉檔小工具")
+        root.geometry("580x680")
+        root.minsize(520, 620)
 
         self.files: list[Path] = []
 
-        # 讀回上次的設定（輸出資料夾、品質、是否輸出到來源資料夾）
+        # 讀回上次的設定
         settings = self._load_settings()
         self.output_dir = StringVar(value=settings.get("output_dir", ""))
         self.quality = self._clamp_quality(settings.get("quality", 90))
         self.use_source_dir = BooleanVar(value=bool(settings.get("use_source_dir", False)))
+        fmt = str(settings.get("target_format", "JPG")).upper()
+        self.target_format = StringVar(value=fmt if fmt in OUTPUT_FORMATS else "JPG")
+        self.resize_on = BooleanVar(value=bool(settings.get("resize_on", False)))
+        self.max_edge_text = StringVar(value=str(settings.get("max_edge", 1920)))
 
         self._build_ui()
 
@@ -69,69 +74,111 @@ class ConverterApp:
         root.protocol("WM_DELETE_WINDOW", self._on_close)
 
     # ---------- UI 佈局 ----------
+    def _setup_style(self):
+        # 統一各元件內距，讓畫面透氣、分區標題加粗（原生主題會忽略無效設定，安全）
+        style = ttk.Style()
+        style.configure("TButton", padding=5)
+        style.configure("TLabelframe.Label", font=("", 10, "bold"))
+        style.configure("Go.TButton", padding=8)
+
     def _build_ui(self):
-        pad = {"padx": 10, "pady": 6}
+        self._setup_style()
+        outer = ttk.Frame(self.root, padding=12)
+        outer.pack(fill=BOTH, expand=True)
 
-        hint = "把 .webp 檔拖進下面的清單" if _DND_OK else "（未安裝 tkinterdnd2，請用下方按鈕加入檔案）"
-        ttk.Label(self.root, text=hint).pack(anchor="w", **pad)
+        # ── 區塊 1：來源圖片 ──
+        src_box = ttk.LabelFrame(outer, text=" 來源圖片 ", padding=10)
+        src_box.pack(fill=BOTH, expand=True)
 
-        # 檔案清單
-        list_frame = ttk.Frame(self.root)
-        list_frame.pack(fill=BOTH, expand=True, padx=10)
-        self.listbox = Listbox(list_frame, selectmode="extended")
+        hint = "把圖片拖進下面的清單，或按「加入檔案」" if _DND_OK \
+            else "（未安裝 tkinterdnd2，請按「加入檔案」）"
+        ttk.Label(src_box, text=hint, foreground="#777").pack(anchor="w", pady=(0, 6))
+
+        list_frame = ttk.Frame(src_box)
+        list_frame.pack(fill=BOTH, expand=True)
+        self.listbox = Listbox(
+            list_frame, selectmode="extended", height=7,
+            activestyle="none", highlightthickness=1, relief="flat",
+        )
         self.listbox.pack(side="left", fill=BOTH, expand=True)
         scroll = ttk.Scrollbar(list_frame, command=self.listbox.yview)
         scroll.pack(side="right", fill="y")
         self.listbox.config(yscrollcommand=scroll.set)
-
         if _DND_OK:
             self.listbox.drop_target_register(DND_FILES)
             self.listbox.dnd_bind("<<Drop>>", self._on_drop)
 
-        # 檔案操作按鈕
-        btn_row = ttk.Frame(self.root)
-        btn_row.pack(fill="x", **pad)
+        btn_row = ttk.Frame(src_box)
+        btn_row.pack(fill="x", pady=(8, 0))
         ttk.Button(btn_row, text="加入檔案", command=self._add_files).pack(side="left")
         ttk.Button(btn_row, text="移除選取", command=self._remove_selected).pack(side="left", padx=6)
         ttk.Button(btn_row, text="移除全部", command=self._clear).pack(side="left")
 
-        # 輸出資料夾
-        out_row = ttk.Frame(self.root)
-        out_row.pack(fill="x", **pad)
-        ttk.Label(out_row, text="輸出資料夾：").pack(side="left")
-        self.out_entry = ttk.Entry(out_row, textvariable=self.output_dir)
-        self.out_entry.pack(side="left", fill="x", expand=True, padx=6)
-        self.out_btn = ttk.Button(out_row, text="選擇…", command=self._choose_output)
-        self.out_btn.pack(side="left")
+        # ── 區塊 2：輸出設定（grid 對齊）──
+        out_box = ttk.LabelFrame(outer, text=" 輸出設定 ", padding=10)
+        out_box.pack(fill="x", pady=(12, 0))
+        out_box.columnconfigure(1, weight=1)
 
-        # 「預設」＝輸出到與來源檔相同的資料夾（勾了就不用選路徑）
+        ttk.Label(out_box, text="輸出格式").grid(row=0, column=0, sticky="w", pady=4)
+        self.fmt_combo = ttk.Combobox(
+            out_box, textvariable=self.target_format, state="readonly",
+            values=list(OUTPUT_FORMATS.keys()), width=10,
+        )
+        self.fmt_combo.grid(row=0, column=1, columnspan=2, sticky="w", padx=8, pady=4)
+        self.fmt_combo.bind("<<ComboboxSelected>>", lambda e: self._on_format_change())
+
+        ttk.Label(out_box, text="輸出位置").grid(row=1, column=0, sticky="w", pady=4)
+        self.out_entry = ttk.Entry(out_box, textvariable=self.output_dir)
+        self.out_entry.grid(row=1, column=1, sticky="ew", padx=8, pady=4)
+        self.out_btn = ttk.Button(out_box, text="選擇…", width=8, command=self._choose_output)
+        self.out_btn.grid(row=1, column=2, sticky="e", pady=4)
+
         ttk.Checkbutton(
-            self.root,
-            text="預設（輸出到與來源檔相同的資料夾）",
-            variable=self.use_source_dir,
-            command=self._on_toggle_default,
-        ).pack(anchor="w", padx=10)
-        self._on_toggle_default()  # 依載入的設定套用初始啟用/停用狀態
+            out_box, text="輸出到與來源檔相同的資料夾",
+            variable=self.use_source_dir, command=self._on_toggle_default,
+        ).grid(row=2, column=1, columnspan=2, sticky="w", padx=8)
 
-        # 品質滑桿
-        q_row = ttk.Frame(self.root)
-        q_row.pack(fill="x", **pad)
-        ttk.Label(q_row, text="JPG 品質：").pack(side="left")
-        self.q_label = ttk.Label(q_row, text=str(self.quality), width=4)
-        self.q_label.pack(side="right")
+        ttk.Separator(out_box, orient=HORIZONTAL).grid(
+            row=3, column=0, columnspan=3, sticky="ew", pady=10
+        )
+
+        self.q_title = ttk.Label(out_box, text="品質")
+        self.q_title.grid(row=4, column=0, sticky="w", pady=4)
+        q_frame = ttk.Frame(out_box)
+        q_frame.grid(row=4, column=1, columnspan=2, sticky="ew", padx=8, pady=4)
         self.q_scale = ttk.Scale(
-            q_row, from_=1, to=100, orient=HORIZONTAL, command=self._on_quality
+            q_frame, from_=1, to=100, orient=HORIZONTAL, command=self._on_quality
         )
         self.q_scale.set(self.quality)
-        self.q_scale.pack(side="left", fill="x", expand=True, padx=6)
+        self.q_scale.pack(side="left", fill="x", expand=True)
+        self.q_label = ttk.Label(q_frame, text=str(self.quality), width=5, anchor="e")
+        self.q_label.pack(side="right", padx=(8, 0))
 
-        # 轉檔 + 進度
-        self.progress = ttk.Progressbar(self.root, mode="determinate")
-        self.progress.pack(fill="x", padx=10, pady=(4, 0))
+        ttk.Checkbutton(
+            out_box, text="限制最長邊（像素）",
+            variable=self.resize_on, command=self._on_toggle_resize,
+        ).grid(row=5, column=0, sticky="w", pady=4)
+        self.edge_entry = ttk.Entry(out_box, textvariable=self.max_edge_text, width=10)
+        self.edge_entry.grid(row=5, column=1, sticky="w", padx=8, pady=4)
+
+        # ── 區塊 3：執行 ──
+        run_box = ttk.Frame(outer)
+        run_box.pack(fill="x", pady=(12, 0))
+        self.progress = ttk.Progressbar(run_box, mode="determinate")
+        self.progress.pack(fill="x")
         self.status = StringVar(value="準備就緒")
-        ttk.Label(self.root, textvariable=self.status).pack(anchor="w", **pad)
-        self.convert_btn = ttk.Button(self.root, text="開始轉檔", command=self._start_convert)
-        self.convert_btn.pack(pady=(0, 10))
+        ttk.Label(run_box, textvariable=self.status, foreground="#777").pack(
+            anchor="w", pady=(4, 8)
+        )
+        self.convert_btn = ttk.Button(
+            run_box, text="開始轉檔", command=self._start_convert, style="Go.TButton"
+        )
+        self.convert_btn.pack(fill="x")
+
+        # 依載入的設定套用初始啟用/停用狀態
+        self._on_toggle_default()
+        self._on_format_change()
+        self._on_toggle_resize()
 
     # ---------- 事件處理 ----------
     def _on_drop(self, event):
@@ -151,24 +198,29 @@ class ConverterApp:
         return value > 0 and value >= maximum
 
     def _add_files(self):
+        pattern = " ".join(f"*{e}" for e in sorted(INPUT_EXTS))
         paths = filedialog.askopenfilenames(
-            title="選擇 WebP 檔",
-            filetypes=[("WebP 圖片", "*.webp"), ("所有檔案", "*.*")],
+            title="選擇圖片",
+            filetypes=[("圖片", pattern), ("所有檔案", "*.*")],
         )
         self._add_paths(paths)
 
     def _add_paths(self, paths):
-        added = 0
+        added = skipped = 0
         for p in paths:
             path = Path(p)
-            if path.suffix.lower() != ".webp":
-                continue  # 目前只吃 webp
+            if path.suffix.lower() not in INPUT_EXTS:
+                skipped += 1  # 不支援的格式略過
+                continue
             if path not in self.files:
                 self.files.append(path)
                 self.listbox.insert(END, str(path))
                 added += 1
-        if added:
-            self.status.set(f"已加入 {added} 個檔案，共 {len(self.files)} 個")
+        if added or skipped:
+            msg = f"已加入 {added} 個檔案，共 {len(self.files)} 個"
+            if skipped:
+                msg += f"（略過 {skipped} 個不支援的格式）"
+            self.status.set(msg)
 
     def _remove_selected(self):
         for idx in reversed(self.listbox.curselection()):
@@ -194,6 +246,15 @@ class ConverterApp:
         self.out_entry.config(state=state)
         self.out_btn.config(state=state)
 
+    def _on_format_change(self):
+        # PNG 為無損格式，品質滑桿沒作用，選 PNG 時停用它並標示「無損」
+        lossy = OUTPUT_FORMATS[self.target_format.get()]["lossy"]
+        self.q_scale.config(state="normal" if lossy else "disabled")
+        self.q_label.config(text=str(self.quality) if lossy else "無損")
+
+    def _on_toggle_resize(self):
+        self.edge_entry.config(state="normal" if self.resize_on.get() else "disabled")
+
     def _on_quality(self, value):
         self.quality = int(float(value))
         self.q_label.config(text=str(self.quality))
@@ -201,7 +262,7 @@ class ConverterApp:
     # ---------- 轉檔 ----------
     def _start_convert(self):
         if not self.files:
-            messagebox.showwarning("沒有檔案", "請先加入至少一個 .webp 檔案")
+            messagebox.showwarning("沒有檔案", "請先加入至少一張圖片")
             return
 
         # 勾了「預設」就輸出到各來源檔旁邊（out_dir=None），否則要求選路徑
@@ -213,6 +274,17 @@ class ConverterApp:
                 messagebox.showwarning("沒有輸出位置", "請先選擇輸出資料夾，或勾選「預設」")
                 return
             out_dir = Path(out)
+
+        # 縮放參數：勾了才生效，且必須是正整數
+        max_edge = None
+        if self.resize_on.get():
+            txt = self.max_edge_text.get().strip()
+            if not txt.isdigit() or int(txt) <= 0:
+                messagebox.showwarning("縮放尺寸無效", "最長邊請輸入正整數（像素）")
+                return
+            max_edge = int(txt)
+
+        target = self.target_format.get()
 
         # 開工前先掃描同名檔，讓使用者決定覆蓋/略過/取消（在主執行緒問，避免
         # 轉檔背景執行緒開對話框造成的同步問題）
@@ -233,18 +305,18 @@ class ConverterApp:
         # 轉檔放到背景執行緒，避免 UI 卡住
         threading.Thread(
             target=self._run_convert,
-            args=(files_to_convert, out_dir, self.quality, skipped),
+            args=(files_to_convert, out_dir, target, self.quality, max_edge, skipped),
             daemon=True,
         ).start()
 
     # 對話框衝突清單最多顯示幾筆，避免視窗爆長
     _MAX_SHOW = 10
 
-    @staticmethod
-    def _target_of(f, out_dir) -> Path:
-        # 完整輸出路徑。out_dir 為 None（預設模式）時輸出到來源檔旁邊。
+    def _target_of(self, f, out_dir) -> Path:
+        # 完整輸出路徑（用目前選定的輸出格式副檔名）。
+        # out_dir 為 None（預設模式）時輸出到來源檔旁邊。
         parent = Path(f).parent if out_dir is None else Path(out_dir)
-        return parent / (Path(f).stem + ".jpg")
+        return parent / (Path(f).stem + target_extension(self.target_format.get()))
 
     def _resolve_conflicts(self, files, out_dir):
         """回傳實際要轉的檔案清單；使用者取消則回傳 None。
@@ -319,13 +391,14 @@ class ConverterApp:
             return [f for f in files if f not in conflict_set]  # 略過
         return files  # 覆蓋
 
-    def _run_convert(self, files, out_dir, quality, skipped=0):
+    def _run_convert(self, files, out_dir, target, quality, max_edge, skipped=0):
         def progress(i, total, src, result):
             # 從背景執行緒安全更新 UI
             self.root.after(0, lambda: self._update_progress(i, total, src))
 
         successes, failures = convert_batch(
-            files, out_dir, quality=quality, on_progress=progress
+            files, out_dir, target=target, quality=quality,
+            max_edge=max_edge, on_progress=progress,
         )
         self.root.after(0, lambda: self._finish(successes, failures, skipped))
 
@@ -370,6 +443,9 @@ class ConverterApp:
             "output_dir": self.output_dir.get().strip(),
             "quality": self.quality,
             "use_source_dir": self.use_source_dir.get(),
+            "target_format": self.target_format.get(),
+            "resize_on": self.resize_on.get(),
+            "max_edge": self.max_edge_text.get().strip(),
         }
         try:
             path.parent.mkdir(parents=True, exist_ok=True)
