@@ -1,6 +1,6 @@
 """圖片轉檔小工具（Windows 10/11）。
 
-輸入 WebP/PNG/JPG/BMP/GIF/TIFF，輸出 JPG/PNG/WEBP，可調品質與縮放。
+輸入 WebP/PNG/JPG/BMP/GIF/TIFF，輸出 JPG/PNG/WEBP，可調品質。
 啟動：python app.py
 需要：Pillow、tkinterdnd2（見 requirements.txt）
 """
@@ -34,6 +34,9 @@ try:
 except ImportError:  # pragma: no cover - 取決於執行環境是否安裝
     _DND_OK = False
 
+# 次要/提示文字用的柔和灰
+_MUTED = "#777777"
+
 
 def _config_path() -> Path:
     """設定檔位置：跟程式放在同一個資料夾（webp2jpg/config.json）。
@@ -53,8 +56,8 @@ class ConverterApp:
     def __init__(self, root: Tk):
         self.root = root
         root.title("圖片轉檔小工具")
-        root.geometry("580x680")
-        root.minsize(520, 620)
+        root.geometry("580x800")
+        root.minsize(500, 780)
 
         self.files: list[Path] = []
 
@@ -77,26 +80,38 @@ class ConverterApp:
 
     # ---------- UI 佈局 ----------
     def _setup_style(self):
-        # 統一各元件內距，讓畫面透氣、分區標題加粗（原生主題會忽略無效設定，安全）
+        # 沿用系統原生主題（可調的元件看起來就明顯可調），只做少量間距與字重調整。
         style = ttk.Style()
         style.configure("TButton", padding=5)
+        style.configure("Muted.TLabel", foreground=_MUTED)
         style.configure("TLabelframe.Label", font=("", 10, "bold"))
-        style.configure("Go.TButton", padding=8)
+        style.configure("Go.TButton", padding=8, font=("", 10, "bold"))
 
     def _build_ui(self):
         self._setup_style()
-        outer = ttk.Frame(self.root, padding=12)
+        outer = ttk.Frame(self.root, padding=14)
         outer.pack(fill=BOTH, expand=True)
 
-        # ── 區塊 1：來源圖片 ──
-        src_box = ttk.LabelFrame(outer, text=" 來源圖片 ", padding=10)
-        src_box.pack(fill=BOTH, expand=True)
+        self._build_source_section(outer)
+        self._build_output_section(outer)
+        self._build_naming_section(outer)
+        self._build_run_section(outer)
+
+        # 依載入的設定套用初始啟用/停用狀態
+        self._on_toggle_default()
+        self._on_format_change()
+        self._on_toggle_rename()
+
+    def _build_source_section(self, parent):
+        """區塊 1：來源圖片清單與加入/移除按鈕。"""
+        box = ttk.LabelFrame(parent, text=" 來源圖片 ", padding=12)
+        box.pack(fill=BOTH, expand=True)
 
         hint = "把圖片拖進下面的清單，或按「加入檔案」" if _DND_OK \
             else "（未安裝 tkinterdnd2，請按「加入檔案」）"
-        ttk.Label(src_box, text=hint, foreground="#777").pack(anchor="w", pady=(0, 6))
+        ttk.Label(box, text=hint, style="Muted.TLabel").pack(anchor="w", pady=(0, 8))
 
-        list_frame = ttk.Frame(src_box)
+        list_frame = ttk.Frame(box)
         list_frame.pack(fill=BOTH, expand=True)
         self.listbox = Listbox(
             list_frame, selectmode="extended", height=7,
@@ -110,88 +125,92 @@ class ConverterApp:
             self.listbox.drop_target_register(DND_FILES)
             self.listbox.dnd_bind("<<Drop>>", self._on_drop)
 
-        btn_row = ttk.Frame(src_box)
-        btn_row.pack(fill="x", pady=(8, 0))
+        btn_row = ttk.Frame(box)
+        btn_row.pack(fill="x", pady=(10, 0))
         ttk.Button(btn_row, text="加入檔案", command=self._add_files).pack(side="left")
         ttk.Button(btn_row, text="移除選取", command=self._remove_selected).pack(side="left", padx=6)
         ttk.Button(btn_row, text="移除全部", command=self._clear).pack(side="left")
 
-        # ── 區塊 2：輸出設定（grid 對齊）──
-        out_box = ttk.LabelFrame(outer, text=" 輸出設定 ", padding=10)
-        out_box.pack(fill="x", pady=(12, 0))
-        out_box.columnconfigure(1, weight=1)
+    def _build_output_section(self, parent):
+        """區塊 2：輸出格式、位置、品質（grid 對齊）。"""
+        box = ttk.LabelFrame(parent, text=" 輸出設定 ", padding=12)
+        box.pack(fill="x", pady=(14, 0))
+        box.columnconfigure(1, weight=1)
 
-        ttk.Label(out_box, text="輸出格式").grid(row=0, column=0, sticky="w", pady=4)
+        ttk.Label(box, text="輸出格式").grid(row=0, column=0, sticky="w", pady=5)
         self.fmt_combo = ttk.Combobox(
-            out_box, textvariable=self.target_format, state="readonly",
+            box, textvariable=self.target_format, state="readonly",
             values=list(OUTPUT_FORMATS.keys()), width=10,
         )
-        self.fmt_combo.grid(row=0, column=1, columnspan=2, sticky="w", padx=8, pady=4)
+        self.fmt_combo.grid(row=0, column=1, columnspan=2, sticky="w", padx=8, pady=5)
         self.fmt_combo.bind("<<ComboboxSelected>>", lambda e: self._on_format_change())
 
-        ttk.Label(out_box, text="輸出位置").grid(row=1, column=0, sticky="w", pady=4)
-        self.out_entry = ttk.Entry(out_box, textvariable=self.output_dir)
-        self.out_entry.grid(row=1, column=1, sticky="ew", padx=8, pady=4)
-        self.out_btn = ttk.Button(out_box, text="選擇…", width=8, command=self._choose_output)
-        self.out_btn.grid(row=1, column=2, sticky="e", pady=4)
+        ttk.Label(box, text="輸出位置").grid(row=1, column=0, sticky="w", pady=5)
+        self.out_entry = ttk.Entry(box, textvariable=self.output_dir)
+        self.out_entry.grid(row=1, column=1, sticky="ew", padx=8, pady=5)
+        self.out_btn = ttk.Button(box, text="選擇…", width=8, command=self._choose_output)
+        self.out_btn.grid(row=1, column=2, sticky="e", pady=5)
 
         ttk.Checkbutton(
-            out_box, text="輸出到與來源檔相同的資料夾",
+            box, text="輸出到與來源檔相同的資料夾",
             variable=self.use_source_dir, command=self._on_toggle_default,
         ).grid(row=2, column=1, columnspan=2, sticky="w", padx=8)
 
-        ttk.Separator(out_box, orient=HORIZONTAL).grid(
-            row=3, column=0, columnspan=3, sticky="ew", pady=10
+        ttk.Separator(box, orient=HORIZONTAL).grid(
+            row=3, column=0, columnspan=3, sticky="ew", pady=12
         )
 
-        self.q_title = ttk.Label(out_box, text="品質")
-        self.q_title.grid(row=4, column=0, sticky="w", pady=4)
-        q_frame = ttk.Frame(out_box)
-        q_frame.grid(row=4, column=1, columnspan=2, sticky="ew", padx=8, pady=4)
+        self.q_title = ttk.Label(box, text="品質")
+        self.q_title.grid(row=4, column=0, sticky="w", pady=5)
+        q_frame = ttk.Frame(box)
+        q_frame.grid(row=4, column=1, columnspan=2, sticky="ew", padx=8, pady=5)
         self.q_scale = ttk.Scale(
             q_frame, from_=1, to=100, orient=HORIZONTAL, command=self._on_quality
         )
-        self.q_scale.set(self.quality)
         self.q_scale.pack(side="left", fill="x", expand=True)
         self.q_label = ttk.Label(q_frame, text=str(self.quality), width=5, anchor="e")
         self.q_label.pack(side="right", padx=(8, 0))
+        # q_label 建好後才設定滑桿值：set() 會觸發 _on_quality，需要 q_label 已存在
+        self.q_scale.set(self.quality)
 
-        # 重新命名（流水號）：勾了就用 001、002… 命名，起始數字為 0-9 的 1-4 位數
+    def _build_naming_section(self, parent):
+        """區塊 3：檔名（重新命名為流水號）。獨立於品質，避免混淆。"""
+        box = ttk.LabelFrame(parent, text=" 檔名 ", padding=12)
+        box.pack(fill="x", pady=(14, 0))
+
+        row = ttk.Frame(box)
+        row.pack(fill="x")
         ttk.Checkbutton(
-            out_box, text="重新命名（流水號）",
+            row, text="重新命名（流水號）",
             variable=self.rename_on, command=self._on_toggle_rename,
-        ).grid(row=5, column=0, sticky="w", pady=4)
-        rn_frame = ttk.Frame(out_box)
-        rn_frame.grid(row=5, column=1, columnspan=2, sticky="w", padx=8, pady=4)
-        ttk.Label(rn_frame, text="起始數字").pack(side="left")
+        ).pack(side="left")
+        ttk.Label(row, text="起始數字").pack(side="left", padx=(16, 4))
         vcmd = (self.root.register(self._validate_start_digit), "%P")
         self.rename_start_entry = ttk.Entry(
-            rn_frame, textvariable=self.rename_start, width=5,
+            row, textvariable=self.rename_start, width=5,
             validate="key", validatecommand=vcmd, justify="center",
         )
-        self.rename_start_entry.pack(side="left", padx=6)
-        self.rename_preview = ttk.Label(rn_frame, foreground="#777")
-        self.rename_preview.pack(side="left")
+        self.rename_start_entry.pack(side="left")
+
+        # 預覽放在下一行，避免太長擠壓
+        self.rename_preview = ttk.Label(box, style="Muted.TLabel")
+        self.rename_preview.pack(anchor="w", pady=(8, 0))
         self.rename_start.trace_add("write", lambda *_: self._update_rename_preview())
 
-        # ── 區塊 3：執行 ──
-        run_box = ttk.Frame(outer)
-        run_box.pack(fill="x", pady=(12, 0))
-        self.progress = ttk.Progressbar(run_box, mode="determinate")
+    def _build_run_section(self, parent):
+        """區塊 3：進度條、狀態列與主要動作按鈕。"""
+        box = ttk.Frame(parent)
+        box.pack(fill="x", pady=(14, 0))
+        self.progress = ttk.Progressbar(box, mode="determinate")
         self.progress.pack(fill="x")
         self.status = StringVar(value="準備就緒")
-        ttk.Label(run_box, textvariable=self.status, foreground="#777").pack(
-            anchor="w", pady=(4, 8)
+        ttk.Label(box, textvariable=self.status, style="Muted.TLabel").pack(
+            anchor="w", pady=(6, 10)
         )
         self.convert_btn = ttk.Button(
-            run_box, text="開始轉檔", command=self._start_convert, style="Go.TButton"
+            box, text="開始轉檔", command=self._start_convert, style="Go.TButton"
         )
         self.convert_btn.pack(fill="x")
-
-        # 依載入的設定套用初始啟用/停用狀態
-        self._on_toggle_default()
-        self._on_format_change()
-        self._on_toggle_rename()
 
     # ---------- 事件處理 ----------
     def _on_drop(self, event):
@@ -283,7 +302,7 @@ class ConverterApp:
             self.rename_preview.config(text="")
             return
         start = int(self.rename_start.get() or "0")
-        ext = target_extension(self.target_format.get())
+        ext = self._current_ext()
         sample = "、".join(f"{start + i:03d}{ext}" for i in range(3))
         self.rename_preview.config(text=f"→ {sample} …")
 
@@ -310,8 +329,9 @@ class ConverterApp:
         target = self.target_format.get()
 
         # 每個檔案的輸出檔名（重新命名模式=流水號，否則沿用原檔名），與 files 等長。
-        stems = self._output_stems(list(self.files))
-        jobs = list(zip(list(self.files), stems))  # [(src, out_stem), ...]
+        files = list(self.files)
+        stems = self._output_stems(files)
+        jobs = list(zip(files, stems))  # [(src, out_stem), ...]
 
         # 開工前先掃描同名檔，讓使用者決定覆蓋/略過/取消（在主執行緒問，避免
         # 轉檔背景執行緒開對話框造成的同步問題）
@@ -349,11 +369,15 @@ class ConverterApp:
     # 對話框衝突清單最多顯示幾筆，避免視窗爆長
     _MAX_SHOW = 10
 
+    def _current_ext(self) -> str:
+        """目前選定輸出格式的副檔名（例如 '.jpg'）。"""
+        return target_extension(self.target_format.get())
+
     def _target_of(self, src, stem, out_dir) -> Path:
         # 完整輸出路徑（用目前選定的輸出格式副檔名）。
         # out_dir 為 None（預設模式）時輸出到來源檔旁邊。
         parent = Path(src).parent if out_dir is None else Path(out_dir)
-        return parent / (stem + target_extension(self.target_format.get()))
+        return parent / (stem + self._current_ext())
 
     def _resolve_conflicts(self, jobs, out_dir):
         """輸入/回傳 [(src, out_stem), ...]；使用者取消則回傳 None。
