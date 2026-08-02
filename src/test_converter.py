@@ -134,6 +134,28 @@ def test_batch_dst_none_keeps_each_beside_its_source(tmp_path):
     assert set(successes) == {a / "x.jpg", b / "y.jpg"}
 
 
+def test_out_stem_overrides_filename(tmp_path):
+    src = _make_webp(tmp_path / "original.webp")
+    out = convert_one(src, tmp_path, out_stem="001")
+    assert out == tmp_path / "001.jpg"  # 用指定檔名，而非來源檔名
+    assert out.exists()
+
+
+def test_batch_out_stems_sequential_rename(tmp_path):
+    srcs = [_make_webp(tmp_path / f"{n}.webp") for n in ("a", "b", "c")]
+    stems = ["001", "002", "003"]  # 模擬流水號
+    successes, failures = convert_batch(srcs, tmp_path / "out", out_stems=stems)
+    assert not failures
+    names = sorted(p.name for p in successes)
+    assert names == ["001.jpg", "002.jpg", "003.jpg"]
+
+
+def test_batch_out_stems_length_mismatch_rejected(tmp_path):
+    src = _make_webp(tmp_path / "a.webp")
+    with pytest.raises(ValueError):
+        convert_batch([src], tmp_path, out_stems=["001", "002"])  # 長度不符
+
+
 def test_batch_isolates_failures(tmp_path):
     good = _make_webp(tmp_path / "good.webp")
     bad = tmp_path / "bad.webp"

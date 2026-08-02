@@ -65,6 +65,10 @@ class ConverterApp:
         self.use_source_dir = BooleanVar(value=bool(settings.get("use_source_dir", False)))
         fmt = str(settings.get("target_format", "JPG")).upper()
         self.target_format = StringVar(value=fmt if fmt in OUTPUT_FORMATS else "JPG")
+        self.rename_on = BooleanVar(value=bool(settings.get("rename_on", False)))
+        start = str(settings.get("rename_start", "1"))
+        valid_start = start.isascii() and start.isdigit() and 1 <= len(start) <= 4
+        self.rename_start = StringVar(value=start if valid_start else "1")
 
         self._build_ui()
 
@@ -152,6 +156,24 @@ class ConverterApp:
         self.q_label = ttk.Label(q_frame, text=str(self.quality), width=5, anchor="e")
         self.q_label.pack(side="right", padx=(8, 0))
 
+        # 重新命名（流水號）：勾了就用 001、002… 命名，起始數字為 0-9 的 1-4 位數
+        ttk.Checkbutton(
+            out_box, text="重新命名（流水號）",
+            variable=self.rename_on, command=self._on_toggle_rename,
+        ).grid(row=5, column=0, sticky="w", pady=4)
+        rn_frame = ttk.Frame(out_box)
+        rn_frame.grid(row=5, column=1, columnspan=2, sticky="w", padx=8, pady=4)
+        ttk.Label(rn_frame, text="起始數字").pack(side="left")
+        vcmd = (self.root.register(self._validate_start_digit), "%P")
+        self.rename_start_entry = ttk.Entry(
+            rn_frame, textvariable=self.rename_start, width=5,
+            validate="key", validatecommand=vcmd, justify="center",
+        )
+        self.rename_start_entry.pack(side="left", padx=6)
+        self.rename_preview = ttk.Label(rn_frame, foreground="#777")
+        self.rename_preview.pack(side="left")
+        self.rename_start.trace_add("write", lambda *_: self._update_rename_preview())
+
         # ── 區塊 3：執行 ──
         run_box = ttk.Frame(outer)
         run_box.pack(fill="x", pady=(12, 0))
@@ -169,6 +191,7 @@ class ConverterApp:
         # 依載入的設定套用初始啟用/停用狀態
         self._on_toggle_default()
         self._on_format_change()
+        self._on_toggle_rename()
 
     # ---------- 事件處理 ----------
     def _on_drop(self, event):
@@ -241,6 +264,28 @@ class ConverterApp:
         lossy = OUTPUT_FORMATS[self.target_format.get()]["lossy"]
         self.q_scale.config(state="normal" if lossy else "disabled")
         self.q_label.config(text=str(self.quality) if lossy else "無損")
+        self._update_rename_preview()  # 副檔名變了，預覽要跟著更新
+
+    @staticmethod
+    def _validate_start_digit(proposed: str) -> bool:
+        # 起始數字只允許空字串，或 1-4 位的阿拉伯數字 0-9
+        return proposed == "" or (
+            len(proposed) <= 4 and proposed.isascii() and proposed.isdigit()
+        )
+
+    def _on_toggle_rename(self):
+        state = "normal" if self.rename_on.get() else "disabled"
+        self.rename_start_entry.config(state=state)
+        self._update_rename_preview()
+
+    def _update_rename_preview(self):
+        if not self.rename_on.get():
+            self.rename_preview.config(text="")
+            return
+        start = int(self.rename_start.get() or "0")
+        ext = target_extension(self.target_format.get())
+        sample = "、".join(f"{start + i:03d}{ext}" for i in range(3))
+        self.rename_preview.config(text=f"→ {sample} …")
 
     def _on_quality(self, value):
         self.quality = int(float(value))
@@ -264,63 +309,77 @@ class ConverterApp:
 
         target = self.target_format.get()
 
+        # 每個檔案的輸出檔名（重新命名模式=流水號，否則沿用原檔名），與 files 等長。
+        stems = self._output_stems(list(self.files))
+        jobs = list(zip(list(self.files), stems))  # [(src, out_stem), ...]
+
         # 開工前先掃描同名檔，讓使用者決定覆蓋/略過/取消（在主執行緒問，避免
         # 轉檔背景執行緒開對話框造成的同步問題）
-        files_to_convert = self._resolve_conflicts(list(self.files), out_dir)
-        if files_to_convert is None:
+        jobs = self._resolve_conflicts(jobs, out_dir)
+        if jobs is None:
             self.status.set("已取消")
             return  # 使用者取消
-        skipped = len(self.files) - len(files_to_convert)
-        if not files_to_convert:
+        skipped = len(self.files) - len(jobs)
+        if not jobs:
             messagebox.showinfo("沒有要轉的檔案", "同名檔案都被略過了，沒有需要轉檔的項目。")
             self.status.set(f"已取消（略過 {skipped} 個）")
             return
 
+        files_to_convert = [src for src, _ in jobs]
+        out_stems = [stem for _, stem in jobs]
+
         self.convert_btn.config(state="disabled")
-        self.progress.config(value=0, maximum=len(files_to_convert))
+        self.progress.config(value=0, maximum=len(jobs))
         self.status.set("轉檔中…")
 
         # 轉檔放到背景執行緒，避免 UI 卡住
         threading.Thread(
             target=self._run_convert,
-            args=(files_to_convert, out_dir, target, self.quality, skipped),
+            args=(files_to_convert, out_stems, out_dir, target, self.quality, skipped),
             daemon=True,
         ).start()
+
+    def _output_stems(self, files) -> list[str]:
+        """依目前設定算出每個檔案的輸出檔名（不含副檔名）。"""
+        if self.rename_on.get():
+            start = int(self.rename_start.get() or "0")
+            return [f"{start + i:03d}" for i in range(len(files))]
+        return [Path(f).stem for f in files]
 
     # 對話框衝突清單最多顯示幾筆，避免視窗爆長
     _MAX_SHOW = 10
 
-    def _target_of(self, f, out_dir) -> Path:
+    def _target_of(self, src, stem, out_dir) -> Path:
         # 完整輸出路徑（用目前選定的輸出格式副檔名）。
         # out_dir 為 None（預設模式）時輸出到來源檔旁邊。
-        parent = Path(f).parent if out_dir is None else Path(out_dir)
-        return parent / (Path(f).stem + target_extension(self.target_format.get()))
+        parent = Path(src).parent if out_dir is None else Path(out_dir)
+        return parent / (stem + target_extension(self.target_format.get()))
 
-    def _resolve_conflicts(self, files, out_dir):
-        """回傳實際要轉的檔案清單；使用者取消則回傳 None。
+    def _resolve_conflicts(self, jobs, out_dir):
+        """輸入/回傳 [(src, out_stem), ...]；使用者取消則回傳 None。
 
-        以「完整輸出路徑」判斷衝突，涵蓋兩種情況都會跳警告：
+        以「完整輸出路徑」判斷衝突，兩種情況都會跳警告：
           A. 批次內部多個來源會輸出到同一路徑（彼此覆蓋）
-          B. 輸出路徑已存在同名 .jpg
+          B. 輸出路徑已存在同名檔
         """
-        files = self._resolve_duplicate_names(files, out_dir)
-        if files is None:
+        jobs = self._resolve_duplicate_names(jobs, out_dir)
+        if jobs is None:
             return None  # 使用者在 A 取消
-        return self._resolve_existing_files(files, out_dir)
+        return self._resolve_existing_files(jobs, out_dir)
 
-    def _resolve_duplicate_names(self, files, out_dir):
+    def _resolve_duplicate_names(self, jobs, out_dir):
         """A：處理批次內部同名（多個來源 -> 同一輸出路徑）。"""
         groups: dict[str, list] = {}
-        for f in files:
-            groups.setdefault(str(self._target_of(f, out_dir)), []).append(f)
-        dups = {key: fs for key, fs in groups.items() if len(fs) > 1}
+        for src, stem in jobs:
+            groups.setdefault(str(self._target_of(src, stem, out_dir)), []).append(src)
+        dups = {key: srcs for key, srcs in groups.items() if len(srcs) > 1}
         if not dups:
-            return files
+            return jobs
 
         lines = []
-        for key, fs in list(dups.items())[: self._MAX_SHOW]:
-            srcs = "\n".join(f"    {Path(x)}" for x in fs)
-            lines.append(f"{Path(key).name}：\n{srcs}")
+        for key, srcs in list(dups.items())[: self._MAX_SHOW]:
+            shown = "\n".join(f"    {Path(x)}" for x in srcs)
+            lines.append(f"{Path(key).name}：\n{shown}")
         detail = "\n".join(lines)
         if len(dups) > self._MAX_SHOW:
             detail += f"\n…（還有 {len(dups) - self._MAX_SHOW} 組）"
@@ -334,25 +393,33 @@ class ConverterApp:
         if answer is None:
             return None
         if answer is True:
-            # 每個輸出路徑只留第一個出現的來源（保持原順序）
+            # 每個輸出路徑只留第一個出現的工作項（保持原順序）
             seen = set()
             kept = []
-            for f in files:
-                key = str(self._target_of(f, out_dir))
+            for src, stem in jobs:
+                key = str(self._target_of(src, stem, out_dir))
                 if key not in seen:
                     seen.add(key)
-                    kept.append(f)
+                    kept.append((src, stem))
             return kept
-        # 否：把所有牽涉重複的來源整組拿掉，只留輸出路徑唯一的
-        return [f for f in files if len(groups[str(self._target_of(f, out_dir))]) == 1]
+        # 否：把所有牽涉重複的工作項整組拿掉，只留輸出路徑唯一的
+        return [
+            (src, stem)
+            for src, stem in jobs
+            if len(groups[str(self._target_of(src, stem, out_dir))]) == 1
+        ]
 
-    def _resolve_existing_files(self, files, out_dir):
+    def _resolve_existing_files(self, jobs, out_dir):
         """B：處理與已存在檔案的同名衝突（用完整輸出路徑判斷）。"""
-        conflicts = [f for f in files if self._target_of(f, out_dir).exists()]
+        conflicts = [
+            (src, stem) for src, stem in jobs if self._target_of(src, stem, out_dir).exists()
+        ]
         if not conflicts:
-            return files
+            return jobs
 
-        names = "\n".join(self._target_of(f, out_dir).name for f in conflicts[: self._MAX_SHOW])
+        names = "\n".join(
+            self._target_of(src, stem, out_dir).name for src, stem in conflicts[: self._MAX_SHOW]
+        )
         if len(conflicts) > self._MAX_SHOW:
             names += f"\n…（還有 {len(conflicts) - self._MAX_SHOW} 個）"
 
@@ -366,16 +433,17 @@ class ConverterApp:
             return None  # 取消
         if answer is False:
             conflict_set = set(conflicts)
-            return [f for f in files if f not in conflict_set]  # 略過
-        return files  # 覆蓋
+            return [job for job in jobs if job not in conflict_set]  # 略過
+        return jobs  # 覆蓋
 
-    def _run_convert(self, files, out_dir, target, quality, skipped=0):
+    def _run_convert(self, files, out_stems, out_dir, target, quality, skipped=0):
         def progress(i, total, src, result):
             # 從背景執行緒安全更新 UI
             self.root.after(0, lambda: self._update_progress(i, total, src))
 
         successes, failures = convert_batch(
-            files, out_dir, target=target, quality=quality, on_progress=progress,
+            files, out_dir, target=target, quality=quality,
+            out_stems=out_stems, on_progress=progress,
         )
         self.root.after(0, lambda: self._finish(successes, failures, skipped))
 
@@ -421,6 +489,8 @@ class ConverterApp:
             "quality": self.quality,
             "use_source_dir": self.use_source_dir.get(),
             "target_format": self.target_format.get(),
+            "rename_on": self.rename_on.get(),
+            "rename_start": self.rename_start.get() or "1",
         }
         try:
             path.parent.mkdir(parents=True, exist_ok=True)

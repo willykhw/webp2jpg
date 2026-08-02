@@ -39,6 +39,7 @@ def convert_one(
     target: str = "JPG",
     quality: int = 90,
     background: tuple[int, int, int] = DEFAULT_BACKGROUND,
+    out_stem: str | None = None,
 ) -> Path:
     """把單一圖片轉成指定格式，回傳輸出檔路徑。
 
@@ -47,6 +48,7 @@ def convert_one(
     target     : 目標格式 'JPG' / 'PNG' / 'WEBP'
     quality    : 有損格式（JPG/WEBP）的品質 1-100；PNG 無損會忽略
     background : 目標不支援透明（JPG）且來源有透明時，透明區域填的 RGB 底色
+    out_stem   : 指定輸出檔名（不含副檔名）；None 則沿用來源檔名
     """
     target = target.upper()
     if target not in OUTPUT_FORMATS:
@@ -57,6 +59,7 @@ def convert_one(
     spec = OUTPUT_FORMATS[target]
     src = Path(src)
     target_dir = src.parent if dst_dir is None else Path(dst_dir)
+    stem = src.stem if out_stem is None else out_stem
 
     with Image.open(src) as im:
         if spec["alpha"]:
@@ -71,7 +74,7 @@ def convert_one(
         else:
             out_im = im.convert("RGB")
 
-        dst = target_dir / (src.stem + spec["ext"])
+        dst = target_dir / (stem + spec["ext"])
         save_kwargs = {}
         if spec["lossy"]:
             save_kwargs["quality"] = quality
@@ -88,14 +91,18 @@ def convert_batch(
     target: str = "JPG",
     quality: int = 90,
     background: tuple[int, int, int] = DEFAULT_BACKGROUND,
+    out_stems=None,
     on_progress=None,
 ):
     """批次轉檔。回傳 (successes, failures)。
 
     single 檔失敗不會中斷整批，會收集到 failures 裡（Rule 12：失敗要浮出來）。
+    out_stems  : 與 sources 等長的輸出檔名清單（不含副檔名）；None 則沿用來源檔名。
     on_progress(index, total, src, result_or_error) 每處理完一個就回呼一次。
     """
     sources = [Path(s) for s in sources]
+    if out_stems is not None and len(out_stems) != len(sources):
+        raise ValueError("out_stems 長度必須與 sources 相同")
     if dst_dir is not None:
         dst_dir = Path(dst_dir)
         dst_dir.mkdir(parents=True, exist_ok=True)
@@ -108,6 +115,7 @@ def convert_batch(
         try:
             out = convert_one(
                 src, dst_dir, target=target, quality=quality, background=background,
+                out_stem=None if out_stems is None else out_stems[i - 1],
             )
             successes.append(out)
             if on_progress:
