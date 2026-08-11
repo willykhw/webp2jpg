@@ -216,18 +216,7 @@ class ConverterApp:
     def _on_drop(self, event):
         # DnD 回傳的路徑字串可能含大括號（路徑有空白時），用 splitlist 正確拆解
         paths = self.root.tk.splitlist(event.data)
-        # 上一批已轉完（進度條 100%）時再拖新檔，視為開新的一批，先清空舊清單
-        if self._progress_full():
-            self._clear()
         self._add_paths(paths)
-
-    def _progress_full(self) -> bool:
-        try:
-            value = float(self.progress["value"])
-            maximum = float(self.progress["maximum"])
-        except (KeyError, ValueError):
-            return False
-        return value > 0 and value >= maximum
 
     def _add_files(self):
         pattern = " ".join(f"*{e}" for e in sorted(INPUT_EXTS))
@@ -469,24 +458,47 @@ class ConverterApp:
             files, out_dir, target=target, quality=quality,
             out_stems=out_stems, on_progress=progress,
         )
-        self.root.after(0, lambda: self._finish(successes, failures, skipped))
+        # 算出「成功轉檔的來源檔」（失敗的要留在清單上）
+        failed_srcs = {src for src, _ in failures}
+        succeeded_srcs = [f for f in files if f not in failed_srcs]
+        self.root.after(
+            0, lambda: self._finish(successes, failures, skipped, succeeded_srcs)
+        )
 
     def _update_progress(self, i, total, src):
         self.progress.config(value=i)
         self.status.set(f"轉檔中… ({i}/{total}) {Path(src).name}")
 
-    def _finish(self, successes, failures, skipped=0):
+    def _finish(self, successes, failures, skipped, succeeded_srcs):
         self.convert_btn.config(state="normal")
+        # 成功的從清單移除（全部成功時清單即清空）；失敗的留在清單上供檢視/重試
+        self._drop_from_list(succeeded_srcs)
+        self.progress.config(value=0)
+
         msg = f"完成！成功 {len(successes)} 個"
         if skipped:
             msg += f"，略過 {skipped} 個"
         if failures:
-            msg += f"，失敗 {len(failures)} 個"
+            msg += f"，失敗 {len(failures)} 個（保留在清單）"
             detail = "\n".join(f"{Path(s).name}: {err}" for s, err in failures)
-            messagebox.showerror("部分檔案轉檔失敗", detail)
+            messagebox.showerror(
+                "部分檔案轉檔失敗",
+                f"以下 {len(failures)} 個檔案轉檔失敗，已保留在清單中：\n\n{detail}",
+            )
         else:
             messagebox.showinfo("完成", msg)
         self.status.set(msg)
+
+    def _drop_from_list(self, sources):
+        """把成功轉檔的來源檔從清單移除，其餘（失敗/略過）保留原順序。"""
+        drop = set(sources)
+        keep = [f for f in self.files if f not in drop]
+        if len(keep) == len(self.files):
+            return  # 沒有要移除的
+        self.files = keep
+        self.listbox.delete(0, END)
+        for f in keep:
+            self.listbox.insert(END, str(f))
 
     # ---------- 設定的載入/儲存 ----------
     @staticmethod
