@@ -56,8 +56,8 @@ class ConverterApp:
     def __init__(self, root: Tk):
         self.root = root
         root.title("圖片轉檔小工具")
-        root.geometry("580x800")
         root.minsize(500, 780)
+        self._center_window(580, 800)
 
         self.files: list[Path] = []
 
@@ -79,6 +79,15 @@ class ConverterApp:
         root.protocol("WM_DELETE_WINDOW", self._on_close)
 
     # ---------- UI 佈局 ----------
+    def _center_window(self, w: int, h: int):
+        # 讓視窗開在螢幕正中央（只設大小時，系統預設常把視窗擺到偏左上）。
+        self.root.update_idletasks()
+        sw = self.root.winfo_screenwidth()
+        sh = self.root.winfo_screenheight()
+        x = max(0, (sw - w) // 2)
+        y = max(0, (sh - h) // 2)
+        self.root.geometry(f"{w}x{h}+{x}+{y}")
+
     def _setup_style(self):
         # 沿用系統原生主題（可調的元件看起來就明顯可調），只做少量間距與字重調整。
         style = ttk.Style()
