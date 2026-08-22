@@ -148,6 +148,17 @@ class FolderApp:
         style = {"ok": "Ok.TLabel", "error": "Err.TLabel"}.get(kind, "Muted.TLabel")
         self.status_label.config(style=style)
 
+    def _bring_to_front(self):
+        """把視窗帶到所有應用程式最上層（處理完成時提醒使用者）。"""
+        try:
+            self.root.deiconify()
+            self.root.lift()
+            self.root.attributes("-topmost", True)
+            self.root.after(600, lambda: self.root.attributes("-topmost", False))
+            self.root.focus_force()
+        except Exception:  # noqa: BLE001
+            pass
+
     # ---------- 清單操作 ----------
     def _on_drop(self, event):
         self._add_paths(self.root.tk.splitlist(event.data))
@@ -303,6 +314,8 @@ class FolderApp:
                 summary + "\n\n" + "\n".join(lines),
             )
         # 全部成功時不跳視窗，訊息已顯示在狀態列
+
+        self._bring_to_front()  # 處理完成，把視窗帶到最上層提醒使用者
 
     # ---------- 設定的載入/儲存 ----------
     @staticmethod

@@ -230,6 +230,18 @@ class ConverterApp:
         style = {"ok": "Ok.TLabel", "error": "Err.TLabel"}.get(kind, "Muted.TLabel")
         self.status_label.config(style=style)
 
+    def _bring_to_front(self):
+        """把視窗帶到所有應用程式最上層（轉檔完成時提醒使用者）。"""
+        try:
+            self.root.deiconify()  # 若被最小化則還原
+            self.root.lift()
+            self.root.attributes("-topmost", True)
+            # 短暫置頂把視窗拉到前景，隨即取消，避免變成永久最上層
+            self.root.after(600, lambda: self.root.attributes("-topmost", False))
+            self.root.focus_force()
+        except Exception:  # noqa: BLE001 - 帶到前景失敗不影響轉檔結果
+            pass
+
     # ---------- 事件處理 ----------
     def _on_drop(self, event):
         # DnD 回傳的路徑字串可能含大括號（路徑有空白時），用 splitlist 正確拆解
@@ -511,6 +523,8 @@ class ConverterApp:
             # 全部成功：進度條保持滿格，配綠色訊息更直覺（不跳視窗）
             self.progress.config(value=self.progress.cget("maximum"))
             self._set_status("✓ " + msg, kind="ok")
+
+        self._bring_to_front()  # 轉檔完成，把視窗帶到最上層提醒使用者
 
     def _drop_from_list(self, sources):
         """把成功轉檔的來源檔從清單移除，其餘（失敗/略過）保留原順序。"""
