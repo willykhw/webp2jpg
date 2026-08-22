@@ -25,6 +25,7 @@ from tkinter import (
 from tkinter import ttk
 
 from converter import INPUT_EXTS, OUTPUT_FORMATS, convert_batch, target_extension
+from taskbar import TaskbarProgress
 
 # 拖曳功能靠 tkinterdnd2；沒裝的話程式仍可用「加入檔案」按鈕運作。
 try:
@@ -74,6 +75,7 @@ class ConverterApp:
         self.rename_start = StringVar(value=start if valid_start else "1")
 
         self._build_ui()
+        self.taskbar = TaskbarProgress(root)  # 工作列圖示進度（Windows；其他平台 no-op）
 
         # 關閉視窗時把當下設定存下來
         root.protocol("WM_DELETE_WINDOW", self._on_close)
@@ -93,6 +95,8 @@ class ConverterApp:
         style = ttk.Style()
         style.configure("TButton", padding=5)
         style.configure("Muted.TLabel", foreground=_MUTED)
+        style.configure("Ok.TLabel", foreground="#1a7f37", font=("", 10, "bold"))
+        style.configure("Err.TLabel", foreground="#b00020", font=("", 10, "bold"))
         style.configure("TLabelframe.Label", font=("", 10, "bold"))
         style.configure("Go.TButton", padding=8, font=("", 10, "bold"))
 
@@ -213,13 +217,18 @@ class ConverterApp:
         self.progress = ttk.Progressbar(box, mode="determinate")
         self.progress.pack(fill="x")
         self.status = StringVar(value="準備就緒")
-        ttk.Label(box, textvariable=self.status, style="Muted.TLabel").pack(
-            anchor="w", pady=(6, 10)
-        )
+        self.status_label = ttk.Label(box, textvariable=self.status, style="Muted.TLabel")
+        self.status_label.pack(anchor="w", pady=(6, 10))
         self.convert_btn = ttk.Button(
             box, text="開始轉檔", command=self._start_convert, style="Go.TButton"
         )
         self.convert_btn.pack(fill="x")
+
+    def _set_status(self, msg, kind="info"):
+        """更新狀態列文字與顏色。kind: info(灰) / ok(綠) / error(紅)。"""
+        self.status.set(msg)
+        style = {"ok": "Ok.TLabel", "error": "Err.TLabel"}.get(kind, "Muted.TLabel")
+        self.status_label.config(style=style)
 
     # ---------- 事件處理 ----------
     def _on_drop(self, event):
@@ -236,6 +245,7 @@ class ConverterApp:
         self._add_paths(paths)
 
     def _add_paths(self, paths):
+        self.progress.config(value=0)  # 加入新檔＝開新一批，重置上一批的完成進度
         added = skipped = 0
         for p in paths:
             path = Path(p)
@@ -250,20 +260,20 @@ class ConverterApp:
             msg = f"已加入 {added} 個檔案，共 {len(self.files)} 個"
             if skipped:
                 msg += f"（略過 {skipped} 個不支援的格式）"
-            self.status.set(msg)
+            self._set_status(msg)
 
     def _remove_selected(self):
         for idx in reversed(self.listbox.curselection()):
             self.listbox.delete(idx)
             del self.files[idx]
         self.progress.config(value=0)  # 清單一有變動，舊的轉檔進度就失效
-        self.status.set(f"清單剩 {len(self.files)} 個檔案")
+        self._set_status(f"清單剩 {len(self.files)} 個檔案")
 
     def _clear(self):
         self.listbox.delete(0, END)
         self.files.clear()
         self.progress.config(value=0)
-        self.status.set("清單已清空")
+        self._set_status("清單已清空")
 
     def _choose_output(self):
         d = filedialog.askdirectory(title="選擇輸出資料夾")
@@ -335,12 +345,12 @@ class ConverterApp:
         # 轉檔背景執行緒開對話框造成的同步問題）
         jobs = self._resolve_conflicts(jobs, out_dir)
         if jobs is None:
-            self.status.set("已取消")
+            self._set_status("已取消")
             return  # 使用者取消
         skipped = len(self.files) - len(jobs)
         if not jobs:
             messagebox.showinfo("沒有要轉的檔案", "同名檔案都被略過了，沒有需要轉檔的項目。")
-            self.status.set(f"已取消（略過 {skipped} 個）")
+            self._set_status(f"已取消（略過 {skipped} 個）")
             return
 
         files_to_convert = [src for src, _ in jobs]
@@ -348,7 +358,7 @@ class ConverterApp:
 
         self.convert_btn.config(state="disabled")
         self.progress.config(value=0, maximum=len(jobs))
-        self.status.set("轉檔中…")
+        self._set_status("轉檔中…")
 
         # 轉檔放到背景執行緒，避免 UI 卡住
         threading.Thread(
@@ -476,27 +486,31 @@ class ConverterApp:
 
     def _update_progress(self, i, total, src):
         self.progress.config(value=i)
-        self.status.set(f"轉檔中… ({i}/{total}) {Path(src).name}")
+        self.taskbar.set(i, total)  # 同步工作列圖示進度
+        self._set_status(f"轉檔中… ({i}/{total}) {Path(src).name}")
 
     def _finish(self, successes, failures, skipped, succeeded_srcs):
         self.convert_btn.config(state="normal")
         # 成功的從清單移除（全部成功時清單即清空）；失敗的留在清單上供檢視/重試
         self._drop_from_list(succeeded_srcs)
-        self.progress.config(value=0)
+        self.taskbar.clear()  # 移除工作列進度條
 
         msg = f"完成！成功 {len(successes)} 個"
         if skipped:
             msg += f"，略過 {skipped} 個"
         if failures:
+            self.progress.config(value=0)  # 有失敗：清空進度條
             msg += f"，失敗 {len(failures)} 個（保留在清單）"
             detail = "\n".join(f"{Path(s).name}: {err}" for s, err in failures)
             messagebox.showerror(
                 "部分檔案轉檔失敗",
                 f"以下 {len(failures)} 個檔案轉檔失敗，已保留在清單中：\n\n{detail}",
             )
+            self._set_status(msg, kind="error")
         else:
-            messagebox.showinfo("完成", msg)
-        self.status.set(msg)
+            # 全部成功：進度條保持滿格，配綠色訊息更直覺（不跳視窗）
+            self.progress.config(value=self.progress.cget("maximum"))
+            self._set_status("✓ " + msg, kind="ok")
 
     def _drop_from_list(self, sources):
         """把成功轉檔的來源檔從清單移除，其餘（失敗/略過）保留原順序。"""

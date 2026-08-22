@@ -1,2 +1,4 @@
 Pillow>=9.0
 tkinterdnd2>=0.3.0
+Send2Trash>=1.8
+comtypes>=1.1; sys_platform == "win32"

@@ -18,17 +18,27 @@ Windows 10/11 上的圖片轉檔程式。有圖形介面、可拖曳、批次轉
 
 ## 專案結構
 
+本專案有兩支程式：
+
+- **webp2jpg**（`app.py`）：主圖片轉檔工具，清單以「檔案」為單位。
+- **webp2jpg-folder**（`folder_app.py`）：資料夾批次工具，清單以「資料夾」為單位，
+  把每個資料夾內的圖片就地轉成 JPG、成功後原圖移到資源回收桶（交易式、逐夾處理）。
+
 ```
 webp2jpg/
-├── build.bat          Windows 打包腳本（在根目錄執行）
+├── build.bat            Windows 打包腳本（在根目錄執行，一次產生兩個 exe）
 ├── README.md
-├── src/               原始碼
-│   ├── app.py             tkinter 圖形介面
-│   ├── converter.py       轉檔核心邏輯（與 UI 無關，純函式）
-│   ├── test_converter.py  核心邏輯的單元測試
+├── src/                 原始碼
+│   ├── app.py               主程式 GUI
+│   ├── folder_app.py        資料夾批次工具 GUI
+│   ├── converter.py         轉檔核心邏輯（純函式）
+│   ├── folder_core.py       資料夾交易式處理核心（純函式）
+│   ├── test_converter.py    converter 單元測試
+│   ├── test_folder_core.py  folder_core 單元測試
 │   └── requirements.txt
-├── webp2jpg.exe       build.bat 產生的單一執行檔（不進版控）
-└── build/             打包暫存工作夾（不進版控）
+├── webp2jpg.exe         主程式執行檔（不進版控）
+├── webp2jpg-folder.exe  資料夾工具執行檔（不進版控）
+└── build/               打包暫存工作夾（不進版控）
 ```
 
 ## 安裝與執行（開發模式）
@@ -37,10 +47,11 @@ webp2jpg/
 
 ```bash
 pip install -r src/requirements.txt
-python src/app.py
+python src/app.py          # 主程式
+python src/folder_app.py   # 資料夾批次工具
 ```
 
-> 沒安裝 `tkinterdnd2` 也能跑，只是不能拖曳，改用「加入檔案」按鈕即可。
+> 沒安裝 `tkinterdnd2` 也能跑，只是不能拖曳，改用按鈕加入即可。
 
 ## 打包成執行檔（給沒有 Python 的電腦用）
 
@@ -50,9 +61,9 @@ python src/app.py
 build.bat
 ```
 
-採用 `--onefile` 模式，產生**單一** `webp2jpg.exe` 直接放在根目錄，雙擊即可執行；
-打包暫存則留在 `build\`。設定檔 `config.json` 會存在 exe 同一層。只要複製這顆
-`webp2jpg.exe` 就能拿到別台電腦執行。
+採用 `--onefile` 模式，一次產生兩個執行檔 `webp2jpg.exe` 與 `webp2jpg-folder.exe`
+直接放在根目錄，雙擊即可執行；打包暫存則留在 `build\`。設定檔 `config.json` 會存在
+exe 同一層。複製這兩顆 exe 就能拿到別台電腦執行。
 
 > 注意：onefile 每次啟動會先解壓到暫存區，開啟比 onedir 慢幾秒；且未簽章的
 > exe 可能被防毒（如 Avast）誤判攔下，需自行加入例外或回報誤判。
