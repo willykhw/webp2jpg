@@ -23,6 +23,15 @@ OUTPUT_FORMATS = {
 # 可接受的輸入副檔名
 INPUT_EXTS = {".webp", ".png", ".jpg", ".jpeg", ".bmp", ".gif", ".tif", ".tiff"}
 
+# HEIC/HEIF 需要 pillow-heif 外掛；有裝才註冊解碼器並開放這些副檔名。
+try:
+    from pillow_heif import register_heif_opener
+
+    register_heif_opener()
+    INPUT_EXTS |= {".heic", ".heif"}
+except Exception:  # noqa: BLE001 - 沒裝 pillow-heif 就不支援 heic
+    pass
+
 
 def target_extension(target: str) -> str:
     """回傳目標格式的副檔名（例如 'JPG' -> '.jpg'）。"""

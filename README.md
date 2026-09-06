@@ -4,7 +4,7 @@ Windows 10/11 上的圖片轉檔程式。有圖形介面、可拖曳、批次轉
 
 ## 功能
 
-- 🖼️ 多格式輸入：WebP / PNG / JPG / BMP / GIF / TIFF
+- 🖼️ 多格式輸入：WebP / PNG / JPG / BMP / GIF / TIFF / HEIC（HEIC 需 `pillow-heif`）
 - 🎯 多格式輸出：JPG / PNG / WEBP（下拉選單切換）
 - 📦 批次多檔一次轉
 - 🎚️ 品質滑桿（1–100，有損格式；PNG 無損會自動停用）

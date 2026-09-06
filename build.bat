@@ -10,11 +10,11 @@ python -m pip install -r src\requirements.txt pyinstaller
 if errorlevel 1 goto error
 
 echo [2/3] Packaging webp2jpg.exe ...
-pyinstaller --noconfirm --onefile --windowed --name webp2jpg --collect-all tkinterdnd2 --collect-all comtypes --distpath . --workpath build\_work --specpath build src\app.py
+pyinstaller --noconfirm --onefile --windowed --name webp2jpg --collect-all tkinterdnd2 --collect-all comtypes --collect-all pillow_heif --distpath . --workpath build\_work --specpath build src\app.py
 if errorlevel 1 goto error
 
 echo [3/3] Packaging webp2jpg-folder.exe ...
-pyinstaller --noconfirm --onefile --windowed --name webp2jpg-folder --collect-all tkinterdnd2 --collect-all send2trash --collect-all comtypes --distpath . --workpath build\_work --specpath build src\folder_app.py
+pyinstaller --noconfirm --onefile --windowed --name webp2jpg-folder --collect-all tkinterdnd2 --collect-all send2trash --collect-all comtypes --collect-all pillow_heif --distpath . --workpath build\_work --specpath build src\folder_app.py
 if errorlevel 1 goto error
 
 echo.

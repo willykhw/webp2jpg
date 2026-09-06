@@ -106,6 +106,20 @@ def test_webp_output(tmp_path):
         assert res.format == "WEBP"
 
 
+def test_heic_input_converts_to_jpg(tmp_path):
+    # 需要 pillow-heif 外掛；沒裝就跳過
+    pytest.importorskip("pillow_heif")
+    from converter import INPUT_EXTS  # 重新取用（模組載入時才會加入 heic）
+
+    assert ".heic" in INPUT_EXTS
+    src = tmp_path / "photo.heic"
+    Image.new("RGB", (32, 32), (200, 100, 50)).save(src)  # register 後可存 heic
+    out = convert_one(src, tmp_path, target="JPG", quality=85)
+    assert out == tmp_path / "photo.jpg" and out.exists()
+    with Image.open(out) as res:
+        assert res.format == "JPEG" and res.mode == "RGB"
+
+
 def test_target_extension():
     assert target_extension("JPG") == ".jpg"
     assert target_extension("png") == ".png"  # 大小寫不敏感
